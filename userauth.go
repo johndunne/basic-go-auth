@@ -1487,81 +1487,93 @@ var isRequestExemptFromApiHeaders isRequestExemptFromApiHeadersAction
 func AttachExemptFromApiHeadersAction( h isRequestExemptFromApiHeadersAction ){
 	isRequestExemptFromApiHeaders = h
 }*/
+func ProcessHeaderUserIdKey(w http.ResponseWriter, r *http.Request) ( requires_further_processing bool , go_to_next bool ){
+	if user_id := r.Header.Get("Userid"); len(user_id) > 0 {
+		Trace.Printf("User ID in header is: %s\n", user_id)
+		user := &User{}
+		if err := gorm_db.Where("handle = ?", user_id).First(user).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				if user = RequestUserID(user_id); user == nil {
+					Trace.Println("No user with ID so creating: " + user_id)
+				}
+			} else {
+				panic(err)
+			}
+		}
+		if user == nil || user.User_id == 0 {
+			SendClientErrorUnauthorizedResult(w, r, "Invalid user_id")
+			return false, false
+		}
+		go NotifyApiCall(user.User_id, r.URL.Path)
+		context.Set(r, LoggedInUserContextKey, user)
+		return false, true
+	}
+	return true, false
+}
+
+func ProcessHeaderApiKey(w http.ResponseWriter, r *http.Request) ( requires_further_processing bool , go_to_next bool ){
+	if api_key := r.Header.Get("Apikey"); len(api_key) > 0 {
+		if already_set_api_key := context.Get(r, ApiKeyContextKey); already_set_api_key != nil {
+			if already_set_api_key == api_key {
+				return false, true
+			} else {
+				SignUserOut(w, r)
+			}
+		}
+		api_key_object := ApiKey{}
+		gorm_db.Where("api_key = ?", api_key).First(&api_key_object)
+
+		if api_key_object.Api_key_id > 0 {
+			if api_key_object.Valid && api_key_object.Expires > time.Now().Unix() {
+				api_key_owner := User{}
+				err := gorm_db.Where("user_id = ?", api_key_object.Owner_id).First(&api_key_owner).Error
+
+				if err != nil {
+					panic(err)
+				}
+
+				if api_key_owner.User_id == 0 {
+					panic(NewHttpAPIInternalErrorMessage("Failed to load user from api key owner"))
+				}
+
+				if api_key_owner.User_id > 0 {
+					go NotifyApiCall(api_key_object.Owner_id, r.URL.Path)
+
+					context.Set(r, ApiKeyContextKey, api_key_object)
+					context.Set(r, ApiKeyOwner, &api_key_owner)
+					SignUserIn(api_key_object.Owner_id, w, r)
+
+					return false, true
+				} else {
+					panic(NewHttpAPIInternalErrorMessage("Missing owner"))
+				}
+			} else {
+				//Trace.Printf("Expired %d - %d =  %d\n", api_key_object.Expires, time.Now().Unix(), (api_key_object.Expires > time.Now().Unix()))
+				// TODO Delay this connection response for security reasons.
+				SendClientErrorUnauthorizedResult(w, r, "Expired key")
+				return false, false
+			}
+		} else {
+			// TODO Delay this connection response for security reasons.
+			SendClientErrorUnauthorizedResult(w, r, "Missing key")
+			return false, false
+		}
+	}
+	return true, false
+}
 
 func EnforceRecipeAPIHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
-		}else if api_key := r.Header.Get("Apikey");len(api_key) > 0 {
-			if already_set_api_key := context.Get(r, ApiKeyContextKey);already_set_api_key!=nil {
-				if already_set_api_key==api_key {
-					Trace.Printf("Already?")
-					h.ServeHTTP(w, r)
-					return
-				}else{
-					//TODO Why am I signing out this user? Might be better to send error code response
-					Trace.Printf("signout as already a user logged in.")
-					SignUserOut(w,r)
-				}
+		}else if requires_further_processing, go_to_next := ProcessHeaderApiKey(w,r);!requires_further_processing  {
+			if go_to_next {
+				h.ServeHTTP(w, r)
 			}
-			api_key_object := ApiKey{}
-			gorm_db.Where("api_key = ?", api_key).First(&api_key_object)
-
-			if api_key_object.Api_key_id > 0 {
-				Trace.Println("found API KEY ",api_key_object.Api_key," with ID ",api_key_object.Api_key_id, " for request: ", r.URL )
-				if api_key_object.Valid && api_key_object.Expires > time.Now().Unix() {
-					api_key_owner := User{}
-					err:= gorm_db.Where("user_id = ?", api_key_object.Owner_id).First(&api_key_owner).Error
-
-					if err != nil {
-						panic(err)
-					}
-
-					if api_key_owner.User_id == 0 {
-						panic(NewHttpAPIInternalErrorMessage("Failed to load user from api key owner"))
-					}
-
-					if api_key_owner.User_id > 0 {
-						go NotifyApiCall(api_key_object.Owner_id, r.URL.Path)
-
-						context.Set(r, ApiKeyContextKey, api_key_object)
-						context.Set(r, ApiKeyOwner, &api_key_owner)
-						SignUserIn(api_key_object.Owner_id, w, r)
-
-						h.ServeHTTP(w, r)
-					}else {
-						panic(NewHttpAPIInternalErrorMessage("Missing owner"))
-					}
-				}else {
-					//Trace.Printf("Expired %d - %d =  %d\n", api_key_object.Expires, time.Now().Unix(), (api_key_object.Expires > time.Now().Unix()))
-					// TODO Delay this connection response for security reasons.
-					SendClientErrorUnauthorizedResult(w, r, "Expired key")
-				}
-			}else {
-				// TODO Delay this connection response for security reasons.
-				SendClientErrorUnauthorizedResult(w, r, "Missing key")
+		}else if requires_further_processing, go_to_next := ProcessHeaderUserIdKey(w,r);!requires_further_processing  {
+			if go_to_next {
+				h.ServeHTTP(w, r)
 			}
-		}else if user_id := r.Header.Get("Userid");len(user_id) > 0 {
-			Trace.Printf("User ID in header is: %s\n", user_id)
-			user := &User{}
-			if err := gorm_db.Where("handle = ?", user_id).First(user).Error; err != nil {
-				if err == gorm.ErrRecordNotFound {
-					if user = RequestUserID(user_id); user == nil {
-						Trace.Println("No user with ID so creating: " + user_id)
-					}
-				}else {
-					panic(err)
-				}
-			}
-			if user==nil || user.User_id == 0 {
-				SendClientErrorUnauthorizedResult(w, r, "Invalid user_id")
-				return
-			}
-			Trace.Printf("Found user: %v\n", user)
-			go NotifyApiCall(user.User_id, r.URL.Path)
-			context.Set(r, LoggedInUserContextKey, user)
-			h.ServeHTTP(w, r)
-
 		}else{
 			h.ServeHTTP(w, r)
 		}
