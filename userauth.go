@@ -24,7 +24,6 @@ import (
 	"github.com/gorilla/securecookie"
 	"io/ioutil"
 	"os"
-	"recipeserver/log"
 	"strings"
 )
 
@@ -183,10 +182,10 @@ func StartUserEmailer() {
 					"confirm_code":user.VerifyCode,
 				}
 				if _, err:=SendEmail(Email{From:"admin@feastmachine.com", To:[]string{user.Email}, Subject: "Confirm your feastmachine.com account", BodyData:body_data}, "views/emails/confirm_account.tpl");err!=nil{
-					chowlog.Error.Println(err.Error())
+					fmt.Errorf("%s\n", err.Error())
 				}else{
 					if e:=gorm_db.Debug().Exec("UPDATE user SET verify_sent = 1 WHERE user_id = ?", user.User_id).Error;err!=nil{
-						chowlog.Error.Println(e.Error())
+						fmt.Errorf("%s\n", e.Error())
 					}
 				}
 			}
@@ -264,8 +263,7 @@ func GetAuthenticatedUser(r *http.Request) int64 {
 					return 0
 				}
 			}else{
-				chowlog.Error.Println(err.Error())
-				//panic(err)
+				fmt.Errorf("%s\n", err.Error())
 				return 0
 			}
 		}
@@ -328,6 +326,10 @@ func MustNotBeAuthenticated(r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+func KeepUserInContext(r *http.Request, user  *User  ){
+	context.Set(r, LoggedInUserContextKey, user)
 }
 
 func GetAuthorisedInUserObject(r *http.Request) *User {
@@ -1190,7 +1192,6 @@ func SendSignedInObject(w http.ResponseWriter, request *http.Request, created bo
 }
 
 type SigninObject struct {
-	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
