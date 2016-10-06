@@ -359,9 +359,9 @@ func GetAuthorisedUserID(r *http.Request) int64 {
 		return user.User_id
 	} else if rv := context.Get(r, LoggedInUserContextKey); rv != nil {
 		user := rv.(*User)
-		if !user.Guest {
-			panic(NewHttpAPIErrorUnauthorised("User id as a user id method can only be used for guest accounts."))
-		}
+		//if !user.Guest {
+		//	panic(NewHttpAPIErrorUnauthorised("User id as a user id method can only be used for guest accounts."))
+		//}
 		return user.User_id
 	} else if id := GetAuthenticatedUser(r);id>0{
 		return id
@@ -537,6 +537,8 @@ type User struct {
 	Picture_url string `json:"picture_url" sql:"null;default:null;type:varchar(100);unique_index"`
 	VerifyCode string `json:"verify_code" sql:"null;default:null;type:varchar(100);unique_index"`
 	Handle string `json:"handle" sql:"null;default:null;type:varchar(100);unique_index"`
+	AuthUserId string `json:"auth_user_id" sql:"null;default:null;type:varchar(100);auth_user_id"`
+	ApiKey string `json:"api_key" sql:"null;default:null;type:varchar(150);index"`
 }
 
 func (p User) BcryptHashForPassword(password string) []byte {
@@ -1521,7 +1523,9 @@ func ProcessHeaderApiKey(w http.ResponseWriter, r *http.Request) ( requires_furt
 			}
 		}
 		api_key_object := ApiKey{}
-		gorm_db.Where("api_key = ?", api_key).First(&api_key_object)
+		if get_api_key_error := gorm_db.Where("api_key = ?", api_key).First(&api_key_object).Error; get_api_key_error != nil {
+			panic(get_api_key_error)
+		}
 
 		if api_key_object.Api_key_id > 0 {
 			if api_key_object.Valid && api_key_object.Expires > time.Now().Unix() {
