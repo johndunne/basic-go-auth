@@ -340,9 +340,9 @@ func GetAuthorisedInUserObject(r *http.Request) *User {
 	} else if rv := context.Get(r, LoggedInUserContextKey); rv != nil {
 		Trace.Printf("Fetching auth user via user id: %v\n", rv)
 		user := rv.(*User)
-		if !user.Guest {
-			panic(NewHttpAPIErrorUnauthorised("User id as a user id method can only be used for guest accounts."))
-		}
+		//if !user.Guest {
+		//	panic(NewHttpAPIErrorUnauthorised("User id as a user id method can only be used for guest accounts."))
+		//}
 		return user
 	}else if id := GetAuthenticatedUser(r);id>0{
 		if user_object, present := GetUserByUserid(id);present{
@@ -1523,8 +1523,17 @@ func ProcessHeaderApiKey(w http.ResponseWriter, r *http.Request) ( requires_furt
 			}
 		}
 		api_key_object := ApiKey{}
-		if get_api_key_error := gorm_db.Where("api_key = ?", api_key).First(&api_key_object).Error; get_api_key_error != nil {
-			panic(get_api_key_error)
+		if gorm_db==nil{
+			panic(errors.New("Setup a DB first."))
+		}
+		if get_api_key_error := gorm_db.Debug().Where("api_key = ?", api_key).First(&api_key_object).Error; get_api_key_error != nil {
+			if get_api_key_error==gorm.ErrRecordNotFound{
+				SendClientErrorUnauthorizedResult(w, r, "Invalid key")
+				return false, false
+
+			}else {
+				panic(get_api_key_error)
+			}
 		}
 
 		if api_key_object.Api_key_id > 0 {
