@@ -1147,6 +1147,10 @@ func DoesUsernameExist(username string) bool {
 	return user.User_id > 0
 }
 
+func CreateUser(new_user *User) error {
+	return gorm_db.Create(&new_user).Error
+}
+
 func DoesFacebookIDAlreadyExist(facebook_id string) bool {
 	var user User
 	gorm_db.Where(User{Facebook_id: facebook_id}).First(&user)
